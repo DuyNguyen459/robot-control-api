@@ -1,0 +1,35 @@
+# Render Blueprint - Infrastructure as Code
+# https://render.com/docs/blueprint-spec
+
+services:
+  # Web Service (Spring Boot API)
+  - type: web
+    name: robot-control-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore  # Hoặc oregon, frankfurt
+    plan: free
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: robot-control-db
+          property: connectionString
+      - key: DATABASE_USERNAME
+        fromDatabase:
+          name: robot-control-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: robot-control-db
+          property: password
+      - key: PORT
+        value: 8080
+
+databases:
+  # PostgreSQL Database
+  - name: robot-control-db
+    databaseName: robot_control
+    user: robot_be
+    plan: free
+    region: singapore  # Cùng region với web service
