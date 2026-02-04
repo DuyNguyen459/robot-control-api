@@ -11,15 +11,23 @@ services:
     plan: free
     healthCheckPath: /actuator/health
     envVars:
-      - key: DATABASE_URL
+      - key: DB_HOST
         fromDatabase:
           name: robot-control-db
-          property: connectionString
-      - key: DATABASE_USERNAME
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: robot-control-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: robot-control-db
+          property: database
+      - key: DB_USER
         fromDatabase:
           name: robot-control-db
           property: user
-      - key: DATABASE_PASSWORD
+      - key: DB_PASSWORD
         fromDatabase:
           name: robot-control-db
           property: password
