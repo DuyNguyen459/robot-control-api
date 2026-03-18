@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# Build output
+target/
+!target/*.jar
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend (nếu không cần trong Docker)
+robot-control-system-frontend/
+mo_src/
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+src/test/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.docker/

@@ -1,0 +1,19 @@
+spring:
+  cassandra:
+    keyspace-name: ${ASTRA_KEYSPACE:robot_control}
+    schema-action: NONE
+    username: ${ASTRA_CLIENT_ID:token}
+    password: ${ASTRA_CLIENT_SECRET:AstraCS:replace-me}
+    scb-filename: ${ASTRA_SCB_PATH:/app/secure-connect-bundle.zip}
+
+# Optional local overrides
+logging:
+  level:
+    org.springframework.data.cassandra: INFO
+    com.datastax.oss.driver: WARN
+
+# Environment variables to define (local/dev/prod):
+# ASTRA_KEYSPACE=robot_control
+# ASTRA_CLIENT_ID=token
+# ASTRA_CLIENT_SECRET=<astra token>
+# ASTRA_SCB_PATH=<absolute path to secure connect bundle>
