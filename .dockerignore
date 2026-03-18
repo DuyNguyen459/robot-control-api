@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+*.iml
+.vscode
+
+# Build outputs
+target/
+!target/*.jar
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Flutter/Mobile app (không cần cho backend)
+mo_src/
+
+# Test files
+src/test/
+
+# Documentation
+*.md
+!README.md
+
+# Local config
+application-local.properties
