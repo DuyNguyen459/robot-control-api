@@ -377,14 +377,10 @@ class ApiService {
   Future<List<RobotLogEntry>> fetchRobotLogsToday(
     int robotId, {
     DateTime? date,
-    String? type,
     int limit = 50,
   }) {
     final day = _formatDateParam(date ?? DateTime.now());
     final params = <String, String>{'date': day, 'limit': '$limit'};
-    if (type != null && type.trim().isNotEmpty) {
-      params['type'] = type.trim();
-    }
 
     return _fetchList(
       '/logs/robots/$robotId',
@@ -435,25 +431,37 @@ class ApiService {
     int robotId, {
     required DateTime date,
     int limit = 300,
-  }) {
+  }) async {
     final day = _formatDateParam(date);
 
-    return _fetchList<Map<String, dynamic>>(
+    final allLogs = await _fetchList<Map<String, dynamic>>(
       '/logs/robots/$robotId',
       (json) => json,
-      queryParameters: {'date': day, 'type': 'TELEMETRY', 'limit': '$limit'},
-    ).then((items) => items.map(_mapTelemetryFromRobotLog).toList());
+      queryParameters: {'date': day, 'limit': '$limit'},
+    );
+
+    return allLogs
+        .where(_looksLikeTelemetryLog)
+        .map(_mapTelemetryFromRobotLog)
+        .toList();
   }
 
   Future<List<RobotTelemetry>> fetchRobotTelemetryToday(
     int robotId, {
     int limit = 50,
-  }) {
-    return _fetchList<Map<String, dynamic>>(
+  }) async {
+    final allLogs = await _fetchList<Map<String, dynamic>>(
       '/logs/robots/$robotId/today',
       (json) => json,
-      queryParameters: {'type': 'TELEMETRY', 'limit': '$limit'},
-    ).then((items) => items.map(_mapTelemetryFromRobotLog).toList());
+      queryParameters: {'limit': '$limit'},
+    );
+
+    final telemetryCandidates = allLogs
+        .where(_looksLikeTelemetryLog)
+        .map(_mapTelemetryFromRobotLog)
+        .toList();
+
+    return telemetryCandidates;
   }
 
   Future<List<RobotAlert>> fetchRobotAlertsToday(
@@ -566,6 +574,70 @@ class ApiService {
     }
 
     return metadata;
+  }
+
+  bool _looksLikeTelemetryLog(Map<String, dynamic> log) {
+    final logType = (log['logType'] ?? log['log_type'] ?? '').toString();
+    if (logType.toUpperCase() == 'TELEMETRY') {
+      return true;
+    }
+
+    final metadataRaw = log['metadata'];
+    Map<String, dynamic> metadata = <String, dynamic>{};
+    if (metadataRaw is Map<String, dynamic>) {
+      metadata = metadataRaw;
+    } else if (metadataRaw is Map) {
+      metadata = metadataRaw.map((k, v) => MapEntry(k.toString(), v));
+    }
+
+    if (metadata.isNotEmpty) {
+      final payload = _extractTelemetryPayloadFromMetadata(metadata);
+      if (payload.containsKey('jointData') ||
+          payload.containsKey('joint_data') ||
+          payload.containsKey('angles') ||
+          payload.containsKey('batteryPercent') ||
+          payload.containsKey('battery_percent') ||
+          payload.containsKey('battery') ||
+          payload.containsKey('fps') ||
+          payload.containsKey('robotTemp') ||
+          payload.containsKey('robot_temp') ||
+          payload.containsKey('cpuTemp') ||
+          payload.containsKey('cpu_temp') ||
+          payload.containsKey('motorTemp') ||
+          payload.containsKey('motor_temp') ||
+          payload.containsKey('internetReachability') ||
+          payload.containsKey('internet_reachability')) {
+        return true;
+      }
+    }
+
+    final message = log['message'];
+    if (message is String && message.trim().isNotEmpty) {
+      try {
+        final decoded = json.decode(message);
+        if (decoded is Map<String, dynamic>) {
+          return decoded.containsKey('jointData') ||
+              decoded.containsKey('joint_data') ||
+              decoded.containsKey('angles') ||
+              decoded.containsKey('batteryPercent') ||
+              decoded.containsKey('battery_percent') ||
+              decoded.containsKey('battery') ||
+              decoded.containsKey('fps') ||
+              decoded.containsKey('robotTemp') ||
+              decoded.containsKey('robot_temp') ||
+              decoded.containsKey('cpuTemp') ||
+              decoded.containsKey('cpu_temp') ||
+              decoded.containsKey('motorTemp') ||
+              decoded.containsKey('motor_temp') ||
+              decoded.containsKey('internetReachability') ||
+              decoded.containsKey('internet_reachability');
+        }
+      } catch (_) {
+        // Ignore non-json message values.
+      }
+    }
+
+    return false;
   }
 
   Future<List<RobotLogEntry>> fetchSessionLogs(

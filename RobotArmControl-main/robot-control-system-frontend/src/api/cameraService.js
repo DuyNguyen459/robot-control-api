@@ -25,4 +25,9 @@ export const cameraService = {
     const response = await axiosClient.post("/api/camera/angles", { angles, deviceId });
     return response.data?.data;
   },
+
+  sendGripperAction: async (action, deviceId) => {
+    const response = await axiosClient.post("/api/camera/commands", { action, deviceId });
+    return response.data?.data;
+  },
 };

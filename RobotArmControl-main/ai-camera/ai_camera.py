@@ -174,6 +174,17 @@ class RobotHandController:
 
 controller = RobotHandController()
 
+# Auto gripper action from pinch gesture (thumb tip - index tip)
+PINCH_GRAB_THRESHOLD = 0.045
+PINCH_RELEASE_THRESHOLD = 0.085
+GRIPPER_HOLD_SECONDS = 0.22
+GRIPPER_COOLDOWN_SECONDS = 0.80
+
+gripper_state = None
+gripper_candidate = None
+gripper_candidate_since = 0.0
+last_gripper_sent_at = 0.0
+
 # ============ WEBSOCKET ============
 ws_app = None
 ws_connected = False
@@ -267,6 +278,69 @@ def send_angles(angles):
         ws_app.send(json.dumps(payload))
     except Exception as e:
         print(f"! Error sending angles: {e}")
+
+def send_gripper_command(action):
+    global ws_app
+    if ws_app is None or not ws_connected:
+        return
+
+    normalized = str(action or "").strip().lower()
+    if normalized not in ("grab", "release"):
+        return
+
+    with device_lock:
+        dev = DEVICE_ID
+
+    payload = {
+        "type": "robot_command",
+        "deviceId": dev,
+        "action": normalized
+    }
+    try:
+        ws_app.send(json.dumps(payload))
+        print(f"[WS] robot_command sent: {payload}")
+    except Exception as e:
+        print(f"! Error sending robot_command: {e}")
+
+def get_pinch_distance(lm):
+    if not lm or len(lm) < 9:
+        return None
+    dx = lm[4].x - lm[8].x
+    dy = lm[4].y - lm[8].y
+    return math.sqrt(dx * dx + dy * dy)
+
+def detect_gripper_action_from_pinch(pinch_distance):
+    if pinch_distance is None:
+        return None
+    if pinch_distance <= PINCH_GRAB_THRESHOLD:
+        return "grab"
+    if pinch_distance >= PINCH_RELEASE_THRESHOLD:
+        return "release"
+    return None
+
+def maybe_send_auto_gripper_action(action, now):
+    global gripper_state, gripper_candidate, gripper_candidate_since, last_gripper_sent_at
+
+    if action is None:
+        return
+
+    if gripper_candidate != action:
+        gripper_candidate = action
+        gripper_candidate_since = now
+        return
+
+    if now - gripper_candidate_since < GRIPPER_HOLD_SECONDS:
+        return
+
+    if gripper_state == action:
+        return
+
+    if now - last_gripper_sent_at < GRIPPER_COOLDOWN_SECONDS:
+        return
+
+    send_gripper_command(action)
+    gripper_state = action
+    last_gripper_sent_at = now
 
 # ============ HELPER: fetch session from API ============
 def fetch_session_from_api(timeout=5, retries=3, backoff=1.0):
@@ -387,7 +461,7 @@ def draw_ui(frame, controller, fingers_count, handedness, palm_x, control):
         "5 ngon -> J5 hand_link",
         "Tat ca khop: di tay trai/phai de giam/tang goc",
         "J0 range: -175 .. 175",
-        "R = Reset | Q = Quit"
+        "R = Reset | G = Grab | F = Release | Q = Quit"
     ]
     y0 = h - len(instructions) * 22 - 10
     for i, text in enumerate(instructions):
@@ -468,6 +542,11 @@ def main():
                         dt
                     )
                     send_angles(controller.angles)
+
+                    pinch_distance = get_pinch_distance(latest_landmarks)
+                    gripper_action = detect_gripper_action_from_pinch(pinch_distance)
+                    maybe_send_auto_gripper_action(gripper_action, now)
+
                     draw_ui(frame, controller, fingers_count, latest_handedness, palm_x, control)
                 else:
                     cv2.putText(frame, "Dua tay vao camera", (10, 30),
@@ -485,6 +564,10 @@ def main():
                 elif key == ord('r'):
                     controller.reset_angles()
                     print("Angles reset.")
+                elif key == ord('g'):
+                    send_gripper_command("grab")
+                elif key == ord('f'):
+                    send_gripper_command("release")
             else:
                 if cap is not None:
                     cap.release()

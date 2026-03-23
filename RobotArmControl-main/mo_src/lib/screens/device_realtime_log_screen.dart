@@ -30,8 +30,7 @@ class _DeviceRealtimeLogScreenState extends State<DeviceRealtimeLogScreen> {
 
   static const int _telemetryLimit = 1;
   static const int _alertLimit = 10;
-  static const Duration _pollInterval = Duration(milliseconds: 500);
-  static const int _alertsPollDivider = 6;
+  static const Duration _pollInterval = Duration(milliseconds: 100);
 
   bool _loading = true;
   bool _refreshing = false;
@@ -41,7 +40,6 @@ class _DeviceRealtimeLogScreenState extends State<DeviceRealtimeLogScreen> {
   List<RobotAlert> _alerts = const [];
   DateTime? _lastUpdated;
   bool _requestInFlight = false;
-  int _silentTick = 0;
 
   Timer? _pollTimer;
 
@@ -62,13 +60,10 @@ class _DeviceRealtimeLogScreenState extends State<DeviceRealtimeLogScreen> {
     if (!mounted || _refreshing || _requestInFlight) {
       return;
     }
-
-    _silentTick++;
-    final fetchAlerts = _silentTick % _alertsPollDivider == 0;
     await _loadSnapshot(
       showLoading: false,
       showRefreshingIndicator: false,
-      fetchAlerts: fetchAlerts,
+      fetchAlerts: true,
     );
   }
 

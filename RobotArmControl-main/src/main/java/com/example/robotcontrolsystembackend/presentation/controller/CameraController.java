@@ -1,6 +1,7 @@
 package com.example.robotcontrolsystembackend.presentation.controller;
 
 import com.example.robotcontrolsystembackend.application.dto.request.runtime.AiAnglesRequest;
+import com.example.robotcontrolsystembackend.application.dto.request.runtime.GripperCommandRequest;
 import com.example.robotcontrolsystembackend.application.dto.request.runtime.StartSessionRequest;
 import com.example.robotcontrolsystembackend.application.dto.response.runtime.SessionStatusResponse;
 import com.example.robotcontrolsystembackend.application.service.runtime.ControlSessionService;
@@ -19,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 @RestController
@@ -29,15 +32,16 @@ public class CameraController {
 
     private final ControlSessionService controlSessionService;
     private final RobotControlWebSocketHandler webSocketHandler;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     @PostMapping("/start")
     @Operation(summary = "Start AI camera", description = "Start CAMERA control session and broadcast START over WebSocket. Edge devices that run ai_camera.py will activate their webcam. ADMIN and OPERATOR only.")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
     public ResponseEntity<ApiResponse<SessionStatusResponse>> startCamera() {
         try {
-        SessionStatusResponse response = controlSessionService.startSession(
-            StartSessionRequest.builder().controlMode(ControlMode.CAMERA).build()
-        );
+            SessionStatusResponse response = controlSessionService.startSession(
+                    StartSessionRequest.builder().controlMode(ControlMode.CAMERA).build()
+            );
 
             String message = response.getMessage();
             if (response.getConnectedClients() == 0) {
@@ -57,8 +61,8 @@ public class CameraController {
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
     public ResponseEntity<ApiResponse<SessionStatusResponse>> stopCamera() {
         try {
-        SessionStatusResponse response = controlSessionService.stopSession();
-        return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
+            SessionStatusResponse response = controlSessionService.stopSession();
+            return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                     ApiResponse.fail("CAMERA_STOP_FAILED", "Failed to stop AI Camera: " + e.getMessage())
@@ -71,8 +75,8 @@ public class CameraController {
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR', 'VIEWER')")
     public ResponseEntity<ApiResponse<SessionStatusResponse>> getCameraStatus() {
         try {
-        SessionStatusResponse response = controlSessionService.getSessionStatus();
-        return ResponseEntity.ok(ApiResponse.ok("Camera status retrieved", response));
+            SessionStatusResponse response = controlSessionService.getSessionStatus();
+            return ResponseEntity.ok(ApiResponse.ok("Camera status retrieved", response));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                     ApiResponse.fail("CAMERA_STATUS_FAILED", "Failed to get AI Camera status: " + e.getMessage())
@@ -100,16 +104,64 @@ public class CameraController {
                 }
             }
 
-            // Broadcast as the same payload Unity expects.
-            String payload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
-                    Map.of("type", "ai_angles", "angles", angles)
-            );
+            // Broadcast as the same payload Unity expects, now with deviceId targeting.
+            Map<String, Object> payloadMap = new HashMap<>();
+            payloadMap.put("type", "ai_angles");
+            payloadMap.put("angles", angles);
+            if (request.getDeviceId() != null) {
+                payloadMap.put("deviceId", String.valueOf(request.getDeviceId()));
+            }
+
+            String payload = objectMapper.writeValueAsString(payloadMap);
             webSocketHandler.broadcastMessage(payload);
 
             return ResponseEntity.ok(ApiResponse.ok("ai_angles broadcast", null));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                     ApiResponse.fail("AI_ANGLES_SEND_FAILED", "Failed to send ai_angles: " + e.getMessage())
+            );
+        }
+    }
+
+    @PostMapping("/commands")
+    @Operation(
+            summary = "Send robot command (grab/release)",
+            description = "Send gripper action and broadcast to Unity via /ws/robot-control. ADMIN and OPERATOR only."
+    )
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
+    public ResponseEntity<ApiResponse<Void>> sendRobotCommand(@Valid @org.springframework.web.bind.annotation.RequestBody GripperCommandRequest request) {
+        try {
+            String action = request.getAction() == null ? "" : request.getAction().trim().toLowerCase(Locale.ROOT);
+            if (!"grab".equals(action) && !"release".equals(action)) {
+                return ResponseEntity.badRequest().body(
+                        ApiResponse.fail("ROBOT_COMMAND_INVALID", "action must be 'grab' or 'release'")
+                );
+            }
+
+            Long resolvedDeviceId = request.getDeviceId();
+            if (resolvedDeviceId == null) {
+                SessionStatusResponse current = controlSessionService.getSessionStatus();
+                resolvedDeviceId = current.getDeviceId();
+            }
+
+            if (resolvedDeviceId == null) {
+                return ResponseEntity.badRequest().body(
+                        ApiResponse.fail("ROBOT_COMMAND_DEVICE_REQUIRED", "deviceId is required when no active session device exists")
+                );
+            }
+
+            Map<String, Object> payloadMap = new HashMap<>();
+            payloadMap.put("type", "robot_command");
+            payloadMap.put("deviceId", String.valueOf(resolvedDeviceId));
+            payloadMap.put("action", action);
+
+            String payload = objectMapper.writeValueAsString(payloadMap);
+            webSocketHandler.broadcastMessage(payload);
+
+            return ResponseEntity.ok(ApiResponse.ok("robot_command broadcast", null));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(
+                    ApiResponse.fail("ROBOT_COMMAND_SEND_FAILED", "Failed to send robot_command: " + e.getMessage())
             );
         }
     }

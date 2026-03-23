@@ -33,14 +33,14 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class ControlSessionServiceImpl implements ControlSessionService {
-    
+
     private final RobotControlWebSocketHandler webSocketHandler;
     private final ControlSessionRepository controlSessionRepository;
     private final DeviceRepository deviceRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile boolean cameraActive = false;
-    
+
     @Override
     @Transactional
     public SessionStatusResponse startSession(StartSessionRequest request) {
@@ -70,6 +70,8 @@ public class ControlSessionServiceImpl implements ControlSessionService {
 
         String message;
 
+        sendSessionStartMessage(created);
+
         if (mode == ControlMode.CAMERA) {
             // Start AI Camera mode - broadcast START command
             String wsMessage = "{\"type\":\"camera_control\",\"command\":\"START\"}";
@@ -78,7 +80,9 @@ public class ControlSessionServiceImpl implements ControlSessionService {
             message = "Session started with CAMERA mode - AI Camera activated";
             log.info("Control session started - sessionId={} CAMERA mode, START_CAMERA command sent", created.getSessionId());
         } else {
-            // BUTTON mode - no camera activation
+            // BUTTON mode - explicitly stop camera clients for backward compatibility.
+            String wsMessage = "{\"type\":\"camera_control\",\"command\":\"STOP\"}";
+            webSocketHandler.broadcastMessage(wsMessage);
             cameraActive = false;
             message = "Session started with BUTTON mode - Manual control enabled";
             log.info("Control session started - sessionId={} BUTTON mode", created.getSessionId());
@@ -86,7 +90,7 @@ public class ControlSessionServiceImpl implements ControlSessionService {
 
         return toSessionStatus(created, true, message);
     }
-    
+
     @Override
     @Transactional
     public SessionStatusResponse stopSession() {
@@ -105,6 +109,8 @@ public class ControlSessionServiceImpl implements ControlSessionService {
         ControlSession active = activeOpt.get();
         ControlMode previousMode = parseMode(active.getMode());
 
+        sendSessionEndMessage(active);
+
         if (previousMode == ControlMode.CAMERA || cameraActive) {
             String wsMessage = "{\"type\":\"camera_control\",\"command\":\"STOP\"}";
             webSocketHandler.broadcastMessage(wsMessage);
@@ -118,19 +124,19 @@ public class ControlSessionServiceImpl implements ControlSessionService {
 
         return toSessionStatus(active, false, "Session stopped successfully");
     }
-    
+
     @Override
     public SessionStatusResponse getSessionStatus() {
         Optional<ControlSession> activeOpt = findActiveSession();
         if (activeOpt.isEmpty()) {
             cameraActive = false;
             return SessionStatusResponse.builder()
-                .sessionActive(false)
-                .controlMode(null)
-                .connectedClients(webSocketHandler.getConnectedClientsCount())
-                .cameraActive(false)
-                .message("No active session")
-                .build();
+                    .sessionActive(false)
+                    .controlMode(null)
+                    .connectedClients(webSocketHandler.getConnectedClientsCount())
+                    .cameraActive(false)
+                    .message("No active session")
+                    .build();
         }
 
         ControlSession active = activeOpt.get();
@@ -164,22 +170,22 @@ public class ControlSessionServiceImpl implements ControlSessionService {
 
         return toSessionStatusFromEntity(session);
     }
-    
+
     @Override
     public boolean isSessionActive() {
         return findActiveSession().isPresent();
     }
-    
+
     @Override
     public ControlMode getCurrentControlMode() {
         return findActiveSession().map(s -> parseMode(s.getMode())).orElse(null);
     }
-    
+
     @Override
     public int getConnectedClientsCount() {
         return webSocketHandler.getConnectedClientsCount();
     }
-    
+
     @Override
     public boolean sendAngleCommand(int jointIndex, double angle) {
         Optional<ControlSession> activeOpt = findActiveSession();
@@ -187,13 +193,13 @@ public class ControlSessionServiceImpl implements ControlSessionService {
             log.warn("Cannot send angle command - session not active or not in BUTTON mode");
             return false;
         }
-        
+
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("type", "button_angle");
             payload.put("jointIndex", jointIndex);
             payload.put("angle", angle);
-            
+
             String message = objectMapper.writeValueAsString(payload);
             webSocketHandler.broadcastMessage(message);
             log.debug("Sent angle command: joint={}, angle={}", jointIndex, angle);
@@ -203,7 +209,7 @@ public class ControlSessionServiceImpl implements ControlSessionService {
             return false;
         }
     }
-    
+
     @Override
     public boolean sendAllAngles(double[] angles) {
         Optional<ControlSession> activeOpt = findActiveSession();
@@ -211,17 +217,17 @@ public class ControlSessionServiceImpl implements ControlSessionService {
             log.warn("Cannot send angles - session not active or not in BUTTON mode");
             return false;
         }
-        
+
         if (angles == null || angles.length != 6) {
             log.warn("Invalid angles array - must have exactly 6 values");
             return false;
         }
-        
+
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("type", "button_angles");
             payload.put("angles", Arrays.stream(angles).boxed().toArray());
-            
+
             String message = objectMapper.writeValueAsString(payload);
             webSocketHandler.broadcastMessage(message);
             log.debug("Sent all angles: {}", Arrays.toString(angles));
@@ -314,5 +320,28 @@ public class ControlSessionServiceImpl implements ControlSessionService {
                 .startTime(session.getStartTime())
                 .endTime(session.getEndTime())
                 .build();
+    }
+
+    private void sendSessionStartMessage(ControlSession session) {
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("type", "session_start");
+            payload.put("deviceId", session.getDeviceId() == null ? null : String.valueOf(session.getDeviceId()));
+            payload.put("controlMode", session.getMode());
+            webSocketHandler.broadcastMessage(objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            log.warn("Failed to broadcast session_start: {}", e.getMessage());
+        }
+    }
+
+    private void sendSessionEndMessage(ControlSession session) {
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("type", "session_end");
+            payload.put("deviceId", session.getDeviceId() == null ? null : String.valueOf(session.getDeviceId()));
+            webSocketHandler.broadcastMessage(objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            log.warn("Failed to broadcast session_end: {}", e.getMessage());
+        }
     }
 }

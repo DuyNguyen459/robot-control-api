@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'constants/app_theme.dart';
-import 'models/session_identity.dart';
-import 'screens/admin_main_screen.dart';
 import 'screens/api_login_screen.dart';
 import 'screens/main_screen.dart';
 import 'services/session_service.dart';
@@ -18,13 +16,13 @@ class RobotControlApp extends StatefulWidget {
 
 class _RobotControlAppState extends State<RobotControlApp>
     with WidgetsBindingObserver {
-  late Future<SessionIdentity?> _sessionCheckFuture;
+  late Future<bool> _sessionCheckFuture;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _sessionCheckFuture = _restoreSessionIdentity();
+    _sessionCheckFuture = SessionService.restoreSessionIfValid();
   }
 
   @override
@@ -46,30 +44,19 @@ class _RobotControlAppState extends State<RobotControlApp>
       return;
     }
 
-    setState(() {
-      _sessionCheckFuture = isValid
-          ? SessionService.getSessionIdentity()
-          : Future.value(null);
-    });
-  }
-
-  Future<SessionIdentity?> _restoreSessionIdentity() async {
-    final hasValidSession = await SessionService.restoreSessionIfValid();
-    if (!hasValidSession) {
-      return null;
+    if (!isValid) {
+      setState(() {
+        _sessionCheckFuture = Future.value(false);
+      });
     }
-
-    return SessionService.getSessionIdentity();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark(),
-      darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark,
-      home: FutureBuilder<SessionIdentity?>(
+      theme: AppTheme.light(),
+      home: FutureBuilder<bool>(
         future: _sessionCheckFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -78,11 +65,8 @@ class _RobotControlAppState extends State<RobotControlApp>
             );
           }
 
-          final session = snapshot.data;
-          if (session == null) {
-            return const ApiLoginScreen();
-          }
-          return session.isAdmin ? const AdminMainScreen() : const MainScreen();
+          final hasValidSession = snapshot.data == true;
+          return hasValidSession ? const MainScreen() : const ApiLoginScreen();
         },
       ),
     );

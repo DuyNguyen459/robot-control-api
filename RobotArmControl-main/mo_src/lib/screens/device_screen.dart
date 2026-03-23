@@ -27,7 +27,16 @@ class _DeviceScreenState extends State<DeviceScreen> {
     if (value.isEmpty) {
       return null;
     }
-    return int.tryParse(value);
+    final direct = int.tryParse(value);
+    if (direct != null) {
+      return direct;
+    }
+
+    final match = RegExp(r'\d+').firstMatch(value);
+    if (match == null) {
+      return null;
+    }
+    return int.tryParse(match.group(0)!);
   }
 
   @override

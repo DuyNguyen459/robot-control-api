@@ -15,9 +15,14 @@ const JOINT_LIMITS = [
 
 const SPEEDS_DEG_PER_SEC = [120, 90, 90, 100, 100, 100];
 const MODE_HOLD_MS = 300;
+const GRIPPER_GESTURE_HOLD_MS = 220;
+const GRIPPER_ACTION_COOLDOWN_MS = 800;
+const PINCH_CLOSED_THRESHOLD = 0.045;
 
 const SELFIE_MODE = String(import.meta.env.VITE_AI_CAMERA_SELFIE_MODE || "1") !== "0";
-const DEADZONE = 0.08;
+const ENABLE_DIRECT_WS_AI_ANGLES = String(import.meta.env.VITE_AI_CAMERA_DIRECT_WS_SEND || "0") === "1";
+const DEADZONE_RAW = Number(import.meta.env.VITE_AI_CAMERA_DEADZONE || 0.16);
+const DEADZONE = Number.isFinite(DEADZONE_RAW) ? Math.min(0.25, Math.max(0.05, DEADZONE_RAW)) : 0.16;
 const MAX_OFFSET = 0.35;
 
 function clamp(value, min, max) {
@@ -53,6 +58,30 @@ function computePalmCenterX(landmarks) {
 function maybeMirror01(x) {
   if (x == null) return null;
   return SELFIE_MODE ? 1 - x : x;
+}
+
+function computeFingerDistance(landmarks, aIdx, bIdx) {
+  const a = landmarks?.[aIdx];
+  const b = landmarks?.[bIdx];
+  if (!a || !b) return null;
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function computePinchDistances(landmarks) {
+  const thumbIndex = computeFingerDistance(landmarks, 4, 8);
+  const thumbMiddle = computeFingerDistance(landmarks, 4, 12);
+  return { thumbIndex, thumbMiddle };
+}
+
+function isNeutralControlZone(control) {
+  return Math.abs(Number(control || 0)) < 1e-6;
+}
+
+function resetPendingAutoGripper(refs) {
+  refs.pendingGripperActionRef.current = null;
+  refs.pendingGripperSinceRef.current = 0;
 }
 
 function countFingers(landmarks, handedness) {
@@ -126,6 +155,7 @@ export function useAiCamera() {
     landmarks: null,
     handednessRaw: null,
     palmX: null, // raw filtered (0..1) in video coords
+    pinchDistance: null,
     control: 0,
   });
 
@@ -150,6 +180,12 @@ export function useAiCamera() {
   const consecutiveWsSendErrorsRef = useRef(0);
 
   const wsServiceRef = useRef(null);
+
+  const lastGripperActionRef = useRef(null);
+  const pendingGripperActionRef = useRef(null);
+  const pendingGripperSinceRef = useRef(0);
+  const lastGripperSentAtRef = useRef(0);
+  const gripperCommandInFlightRef = useRef(false);
 
   const lastAiAnglesConsoleLogRef = useRef(0);
 
@@ -327,6 +363,77 @@ export function useAiCamera() {
     }
   }
 
+  async function sendGripperAction(action) {
+    if (isViewer) return false;
+
+    const normalized = String(action || "").trim().toLowerCase();
+    if (normalized !== "grab" && normalized !== "release") {
+      setError("Invalid gripper action");
+      return false;
+    }
+
+    const deviceId = sessionDeviceIdRef.current ?? getPreferredDeviceId();
+    if (deviceId == null || Number.isNaN(deviceId)) {
+      setError("Please select a device first.");
+      return false;
+    }
+
+    try {
+      await cameraService.sendGripperAction(normalized, Number(deviceId));
+      return true;
+    } catch (e) {
+      setError(e?.response?.data?.message || e?.message || "Failed to send gripper command");
+      return false;
+    }
+  }
+
+  function detectGripperActionFromPinches(pinchDistances) {
+    const thumbIndex = pinchDistances?.thumbIndex;
+    const thumbMiddle = pinchDistances?.thumbMiddle;
+
+    if (thumbIndex != null && thumbIndex <= PINCH_CLOSED_THRESHOLD) return "grab";
+    if (thumbMiddle != null && thumbMiddle <= PINCH_CLOSED_THRESHOLD) return "release";
+    return null;
+  }
+
+  function maybeSendAutoGripperAction(action, nowMs) {
+    if (!action) return;
+
+    if (pendingGripperActionRef.current !== action) {
+      pendingGripperActionRef.current = action;
+      pendingGripperSinceRef.current = nowMs;
+      return;
+    }
+
+    if (nowMs - pendingGripperSinceRef.current < GRIPPER_GESTURE_HOLD_MS) {
+      return;
+    }
+
+    if (lastGripperActionRef.current === action) {
+      return;
+    }
+
+    if (nowMs - lastGripperSentAtRef.current < GRIPPER_ACTION_COOLDOWN_MS) {
+      return;
+    }
+
+    if (gripperCommandInFlightRef.current) {
+      return;
+    }
+
+    gripperCommandInFlightRef.current = true;
+    sendGripperAction(action)
+        .then((ok) => {
+          if (ok) {
+            lastGripperActionRef.current = action;
+            lastGripperSentAtRef.current = nowMs;
+          }
+        })
+        .finally(() => {
+          gripperCommandInFlightRef.current = false;
+        });
+  }
+
   async function endSession() {
     if (isViewer) return;
     setError("");
@@ -351,9 +458,9 @@ export function useAiCamera() {
         fps: lastFpsRef.current,
         internet: getInternetStatus(),
         uptimeSeconds:
-          sessionStartedAtRef.current > 0
-            ? (performance.now() - sessionStartedAtRef.current) / 1000
-            : null,
+            sessionStartedAtRef.current > 0
+                ? (performance.now() - sessionStartedAtRef.current) / 1000
+                : null,
         sessionId,
       };
 
@@ -456,6 +563,12 @@ export function useAiCamera() {
     isSendingAnglesRef.current = true;
     setIsSendingAngles(true);
 
+    lastGripperActionRef.current = null;
+    pendingGripperActionRef.current = null;
+    pendingGripperSinceRef.current = 0;
+    lastGripperSentAtRef.current = 0;
+    gripperCommandInFlightRef.current = false;
+
     initHands();
     await startLoop();
   }
@@ -540,6 +653,16 @@ export function useAiCamera() {
       const control = normalizePalmX(filteredForControl);
       debugRef.current.control = control;
 
+      const pinchDistances = computePinchDistances(landmarks);
+      debugRef.current.pinchDistance = pinchDistances?.thumbIndex ?? null;
+      const inNeutralZone = isNeutralControlZone(control);
+      const gripperAction = detectGripperActionFromPinches(pinchDistances);
+      maybeSendAutoGripperAction(gripperAction, now);
+
+      if (inNeutralZone) {
+        return;
+      }
+
       // Python-style: integrate ONLY the selected joint
       const next = anglesRef.current.slice(0, 6);
       const j = clamp(selectedJointRef.current, 0, 5);
@@ -571,7 +694,7 @@ export function useAiCamera() {
       }
 
       // Optional: WS direct (useful for debugging), but do not depend on it.
-      if (wsConnectedRef.current) {
+      if (ENABLE_DIRECT_WS_AI_ANGLES && wsConnectedRef.current) {
         const svc = wsServiceRef.current;
         const ok = svc?.sendJson(payload);
         if (!ok) {
@@ -608,7 +731,7 @@ export function useAiCamera() {
         if (consecutiveSendErrorsRef.current >= 10 && !sendErrorShownRef.current) {
           sendErrorShownRef.current = true;
           setError(
-            "Hand tracking failed to run. Possible cause: MediaPipe assets blocked/unreachable (CDN) or insecure context. " +
+              "Hand tracking failed to run. Possible cause: MediaPipe assets blocked/unreachable (CDN) or insecure context. " +
               "Open DevTools Console/Network for details. " +
               (e?.message ? `(${e.message})` : "")
           );
@@ -667,6 +790,7 @@ export function useAiCamera() {
     error,
     startSession,
     endSession,
+    sendGripperAction,
     startCamera,
     stopCamera,
     start,
