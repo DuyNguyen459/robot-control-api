@@ -2,7 +2,8 @@
 # This ensures platforms (Render / CI) that expect a Dockerfile at repo root can build.
 
 # Stage 1: Build
-FROM maven:3.9.9-eclipse-temurin-21-alpine AS builder
+# Use Debian-based image to avoid protoc (protobuf plugin) runtime issues on Alpine/musl.
+FROM maven:3.9.9-eclipse-temurin-21 AS builder
 WORKDIR /app
 
 # Copy pom and download dependencies
