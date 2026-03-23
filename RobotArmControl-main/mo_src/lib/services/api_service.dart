@@ -27,7 +27,7 @@ class ApiService {
   // Can be provided at build time: --dart-define=API_BASE_URL=https://.../api
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://robot-control-system-rmbw.onrender.com/api',
+    defaultValue: 'https://robot-control-api-1.onrender.com/api',
   );
 
   static const String _bootAccessToken = String.fromEnvironment(

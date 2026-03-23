@@ -365,14 +365,12 @@ export default function AiCameraPage() {
               </div>
 
               <div className="text-xs text-white/50">
-                WebSocket payload sent: {`{ "type": "ai_angles", "deviceId": "x", "angles": [a0..a5] }`} (exactly 6 numbers)
+                REST payload sent: {`{ "robotId": 1, "jointAngles": [a0..a5], "gripper": 0|1, "timestamp": "ISO-8601" }`}
               </div>
               <div className="text-xs text-white/50">
                 Gripper action uses pinch gestures to avoid conflicting with joint finger-count mode: thumb-index pinch = grab, thumb-middle pinch = release.
               </div>
-              <div className="text-xs text-white/50">
-                Auto command payload: {`{ "type": "robot_command", "deviceId": "x", "action": "grab|release" }`}
-              </div>
+              <div className="text-xs text-white/50">Backend forwards each payload to Unity via gRPC stream.</div>
             </div>
           </div>
         </div>

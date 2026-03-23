@@ -6,12 +6,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://robot-control-system-rmbw.onrender.com',
+        target: 'https://robot-control-api-1.onrender.com',
         changeOrigin: true,
         secure: true,
       },
       '/ws': {
-        target: 'wss://robot-control-system-rmbw.onrender.com',
+        target: 'wss://robot-control-api-1.onrender.com',
         ws: true,
         changeOrigin: true,
       },

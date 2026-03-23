@@ -2,6 +2,11 @@ syntax = "proto3";
 
 package robot;
 
+option java_multiple_files = true;
+option java_package = "com.example.robotcontrolsystembackend.grpc";
+option java_outer_classname = "RobotControlProto";
+option csharp_namespace = "RobotControl.Grpc";
+
 service RobotControl {
   // Gửi tọa độ các trục (Joints) từ MediaPipe đến Unity
   rpc SendRobotCommand (RobotTarget) returns (ControlResponse);
@@ -9,6 +14,11 @@ service RobotControl {
   // Stream dữ liệu log từ Unity/MediaPipe về server (nếu cần)
   // Client-side streaming: client sends a stream of LogEntry messages
   rpc StreamLogs (stream LogEntry) returns (LogSummary);
+}
+
+service RobotControlBridge {
+  // Unity subscribes by robot_id and keeps a long-lived stream.
+  rpc SubscribeControl (SubscribeControlRequest) returns (stream RobotControlCommand);
 }
 
 message RobotTarget {
@@ -33,4 +43,18 @@ message LogEntry {
 
 message LogSummary {
   int32 total_logs_sent = 1;
+}
+
+message SubscribeControlRequest {
+  int64 robot_id = 1;
+  string client_id = 2;
+}
+
+message RobotControlCommand {
+  int64 robot_id = 1;
+  repeated double joint_angles = 2;
+  int32 gripper = 3;
+  bool has_gripper = 4;
+  string timestamp = 5;
+  string source = 6;
 }

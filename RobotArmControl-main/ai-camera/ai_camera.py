@@ -9,19 +9,15 @@ import os
 import time
 import threading
 import numpy as np
-import queue
-
-# ============ IMPORT gRPC MỚI ============
-import grpc
-import robot_arm_pb2
-import robot_arm_pb2_grpc
+import requests
 
 # ============ CONFIGURATION ============
 API_BASE_URL = os.getenv("ROBOT_API_BASE_URL", "http://localhost:8080")
 WS_URL = os.getenv("ROBOT_WS_URL", "ws://localhost:8080/ws/robot-control")
-# CHÚ Ý: Đã bật mặc định USE_GRPC = True để test với Unity
-USE_GRPC = True 
 SESSION_API_PATH = os.getenv("SESSION_API_PATH", f"{API_BASE_URL}/api/control-sessions/current")
+CONTROL_COMMAND_API_PATH = os.getenv("ROBOT_CONTROL_API_PATH", f"{API_BASE_URL}/api/robot-control/commands")
+LEGACY_ANGLES_API_PATH = os.getenv("ROBOT_LEGACY_ANGLES_API_PATH", f"{API_BASE_URL}/api/camera/angles")
+LEGACY_COMMAND_API_PATH = os.getenv("ROBOT_LEGACY_COMMAND_API_PATH", f"{API_BASE_URL}/api/camera/commands")
 API_BEARER_TOKEN = os.getenv("ROBOT_API_TOKEN", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", None)
@@ -30,31 +26,6 @@ DEVICE_ID = os.getenv("DEVICE_ID", None)
 camera_active = False
 camera_lock = threading.Lock()
 device_lock = threading.Lock()
-
-# ============ gRPC CLIENT SETUP ============
-grpc_queue = queue.Queue(maxsize=100)
-grpc_channel = None
-grpc_stub = None
-
-def grpc_generator():
-    """Generator liên tục lấy tọa độ từ Queue để Stream sang Unity"""
-    while True:
-        item = grpc_queue.get()
-        if item is None:
-            break
-        yield item
-
-def start_grpc_client():
-    """Chạy gRPC trong một Thread riêng để không làm lag Camera"""
-    global grpc_channel, grpc_stub
-    try:
-        grpc_channel = grpc.insecure_channel('localhost:50051')
-        grpc_stub = robot_arm_pb2_grpc.RobotArmStub(grpc_channel)
-        print("✓ gRPC Connected to Unity (localhost:50051)")
-        # Hàm này sẽ block và liên tục gửi data từ generator sang Unity
-        grpc_stub.StreamLandmarks(grpc_generator())
-    except Exception as e:
-        print(f"✗ gRPC Connection Error: {e}")
 
 # ============ SETUP MEDIAPIPE ============
 BaseOptions = mp.tasks.BaseOptions
@@ -181,31 +152,90 @@ controller = RobotHandController()
 ws_app = None
 ws_connected = False
 
+def _auth_headers():
+    headers = {"Content-Type": "application/json"}
+    if API_BEARER_TOKEN:
+        headers["Authorization"] = f"Bearer {API_BEARER_TOKEN}"
+    return headers
+
+def _build_control_payload(angles, gripper=None):
+    with device_lock:
+        raw_device_id = DEVICE_ID
+
+    robot_id = None
+    if raw_device_id not in (None, "", "null"):
+        try:
+            robot_id = int(raw_device_id)
+        except ValueError:
+            robot_id = None
+
+    if robot_id is None:
+        return None
+
+    payload = {
+        "robotId": robot_id,
+        "jointAngles": [float(round(a, 3)) for a in angles[:6]],
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }
+
+    if gripper is not None:
+        payload["gripper"] = int(gripper)
+
+    return payload
+
+def post_control_command(angles, gripper=None):
+    payload = _build_control_payload(angles, gripper=gripper)
+    if payload is None:
+        return
+
+    try:
+        response = requests.post(
+            CONTROL_COMMAND_API_PATH,
+            headers=_auth_headers(),
+            data=json.dumps(payload),
+            timeout=0.35,
+        )
+
+        if response.status_code < 400:
+            return
+
+        if response.status_code not in (404, 405):
+            return
+
+        # Fallback for older deployed backend versions.
+        legacy_angle_payload = {
+            "angles": payload["jointAngles"],
+            "deviceId": payload["robotId"],
+        }
+        requests.post(
+            LEGACY_ANGLES_API_PATH,
+            headers=_auth_headers(),
+            data=json.dumps(legacy_angle_payload),
+            timeout=0.35,
+        )
+
+        if gripper is not None:
+            action_payload = {
+                "action": "grab" if int(gripper) == 1 else "release",
+                "deviceId": payload["robotId"],
+            }
+            requests.post(
+                LEGACY_COMMAND_API_PATH,
+                headers=_auth_headers(),
+                data=json.dumps(action_payload),
+                timeout=0.35,
+            )
+    except Exception:
+        # Camera loop must stay realtime even if API is temporarily unavailable.
+        pass
+
 def send_angles(angles):
-    """Gửi dữ liệu sang Unity qua gRPC và Backend qua WebSocket"""
-    # 1. GỬI SANG UNITY BẰNG gRPC
-    if USE_GRPC and grpc_stub is not None:
-        for i, angle in enumerate(angles):
-            # SỬA Ở ĐÂY: Các biến id, x, y, z bắt buộc phải viết THƯỜNG
-            lm = robot_arm_pb2.Landmark(id=i, x=float(angle), y=0.0, z=0.0)
-            try:
-                grpc_queue.put_nowait(lm)
-            except queue.Full:
-                pass # Bỏ qua frame nếu hàng đợi đầy để tránh giật lag
-    
-    # 2. GỬI SANG BACKEND BẰNG WEBSOCKET
-    if ws_app is not None and ws_connected:
-        with device_lock: dev = DEVICE_ID
-        payload = {"type": "ai_angles", "deviceId": dev, "angles": [round(a, 2) for a in angles]}
-        try: ws_app.send(json.dumps(payload))
-        except: pass
+    """Gửi dữ liệu điều khiển lên Backend qua REST API."""
+    post_control_command(angles)
 
 def send_gripper_command(action):
-    if ws_app and ws_connected:
-        with device_lock: dev = DEVICE_ID
-        payload = {"type": "robot_command", "deviceId": dev, "action": action}
-        try: ws_app.send(json.dumps(payload))
-        except: pass
+    gripper = 1 if str(action).lower() == "grab" else 0
+    post_control_command(controller.angles, gripper=gripper)
 
 # --- Bỏ qua phần WebSocket event listeners (giữ nguyên logic gốc của bạn nhưng làm gọn lại) ---
 def on_message(ws, message):
@@ -252,10 +282,6 @@ def draw_hand(image, landmarks):
 
 def main():
     global camera_active, last_timestamp_ms
-
-    # BẬT GRPC TRONG THREAD RIÊNG
-    if USE_GRPC:
-        threading.Thread(target=start_grpc_client, daemon=True).start()
 
     # BẬT WEBSOCKET
     connect_websocket()
@@ -320,7 +346,6 @@ def main():
         if cap: cap.release()
         cv2.destroyAllWindows()
         hand_landmarker.close()
-        if USE_GRPC: grpc_queue.put(None) # Dừng thread gRPC
 
 if __name__ == "__main__":
     main()

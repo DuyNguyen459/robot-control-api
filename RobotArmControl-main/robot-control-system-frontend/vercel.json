@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://robot-control-system-rmbw.onrender.com/api/:path*"
+      "destination": "https://robot-control-api-1.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",

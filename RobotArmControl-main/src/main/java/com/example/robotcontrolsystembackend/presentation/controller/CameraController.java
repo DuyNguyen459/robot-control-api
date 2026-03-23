@@ -2,11 +2,13 @@ package com.example.robotcontrolsystembackend.presentation.controller;
 
 import com.example.robotcontrolsystembackend.application.dto.request.runtime.AiAnglesRequest;
 import com.example.robotcontrolsystembackend.application.dto.request.runtime.GripperCommandRequest;
+import com.example.robotcontrolsystembackend.application.dto.request.runtime.RobotControlCommandRequest;
+import com.example.robotcontrolsystembackend.application.dto.response.runtime.RobotControlDispatchResponse;
+import com.example.robotcontrolsystembackend.application.service.runtime.RobotControlCommandService;
 import com.example.robotcontrolsystembackend.application.dto.request.runtime.StartSessionRequest;
 import com.example.robotcontrolsystembackend.application.dto.response.runtime.SessionStatusResponse;
 import com.example.robotcontrolsystembackend.application.service.runtime.ControlSessionService;
 import com.example.robotcontrolsystembackend.common.response.ApiResponse;
-import com.example.robotcontrolsystembackend.config.websocket.RobotControlWebSocketHandler;
 import com.example.robotcontrolsystembackend.domain.enumtype.ControlMode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,9 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
-import java.util.HashMap;
 import java.util.Locale;
-import java.util.Map;
+import java.util.stream.DoubleStream;
 
 @RestController
 @RequestMapping("/api/camera")
@@ -31,8 +32,7 @@ import java.util.Map;
 public class CameraController {
 
     private final ControlSessionService controlSessionService;
-    private final RobotControlWebSocketHandler webSocketHandler;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    private final RobotControlCommandService robotControlCommandService;
 
     @PostMapping("/start")
     @Operation(summary = "Start AI camera", description = "Start CAMERA control session and broadcast START over WebSocket. Edge devices that run ai_camera.py will activate their webcam. ADMIN and OPERATOR only.")
@@ -87,10 +87,10 @@ public class CameraController {
     @PostMapping("/angles")
     @Operation(
             summary = "Send AI angles (REST fallback)",
-            description = "Fallback endpoint: browser can POST ai_angles and server will broadcast to /ws/robot-control for Unity clients. ADMIN and OPERATOR only."
+            description = "Compatibility endpoint: browser/ai-camera can POST ai_angles and backend forwards to Unity over gRPC stream. ADMIN and OPERATOR only."
     )
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
-    public ResponseEntity<ApiResponse<Void>> sendAiAngles(@Valid @org.springframework.web.bind.annotation.RequestBody AiAnglesRequest request) {
+    public ResponseEntity<ApiResponse<RobotControlDispatchResponse>> sendAiAngles(@Valid @org.springframework.web.bind.annotation.RequestBody AiAnglesRequest request) {
         try {
             List<Double> angles = request.getAngles();
             if (angles == null || angles.size() != 6) {
@@ -104,18 +104,20 @@ public class CameraController {
                 }
             }
 
-            // Broadcast as the same payload Unity expects, now with deviceId targeting.
-            Map<String, Object> payloadMap = new HashMap<>();
-            payloadMap.put("type", "ai_angles");
-            payloadMap.put("angles", angles);
-            if (request.getDeviceId() != null) {
-                payloadMap.put("deviceId", String.valueOf(request.getDeviceId()));
+            SessionStatusResponse currentSession = controlSessionService.getSessionStatus();
+            Long robotId = request.getDeviceId() != null ? request.getDeviceId() : currentSession.getDeviceId();
+            if (robotId == null) {
+                return ResponseEntity.badRequest().body(ApiResponse.fail("ROBOT_ID_REQUIRED", "deviceId is required when no active session device exists"));
             }
 
-            String payload = objectMapper.writeValueAsString(payloadMap);
-            webSocketHandler.broadcastMessage(payload);
+            RobotControlCommandRequest bridgeRequest = RobotControlCommandRequest.builder()
+                    .robotId(robotId)
+                    .jointAngles(angles)
+                    .build();
 
-            return ResponseEntity.ok(ApiResponse.ok("ai_angles broadcast", null));
+            RobotControlDispatchResponse dispatched = robotControlCommandService.dispatchCommand(bridgeRequest, "camera-angles-compat");
+
+            return ResponseEntity.ok(ApiResponse.ok(dispatched.getMessage(), dispatched));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                     ApiResponse.fail("AI_ANGLES_SEND_FAILED", "Failed to send ai_angles: " + e.getMessage())
@@ -126,10 +128,10 @@ public class CameraController {
     @PostMapping("/commands")
     @Operation(
             summary = "Send robot command (grab/release)",
-            description = "Send gripper action and broadcast to Unity via /ws/robot-control. ADMIN and OPERATOR only."
+            description = "Compatibility endpoint: send gripper action and forward to Unity over gRPC stream. ADMIN and OPERATOR only."
     )
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
-    public ResponseEntity<ApiResponse<Void>> sendRobotCommand(@Valid @org.springframework.web.bind.annotation.RequestBody GripperCommandRequest request) {
+    public ResponseEntity<ApiResponse<RobotControlDispatchResponse>> sendRobotCommand(@Valid @org.springframework.web.bind.annotation.RequestBody GripperCommandRequest request) {
         try {
             String action = request.getAction() == null ? "" : request.getAction().trim().toLowerCase(Locale.ROOT);
             if (!"grab".equals(action) && !"release".equals(action)) {
@@ -150,15 +152,16 @@ public class CameraController {
                 );
             }
 
-            Map<String, Object> payloadMap = new HashMap<>();
-            payloadMap.put("type", "robot_command");
-            payloadMap.put("deviceId", String.valueOf(resolvedDeviceId));
-            payloadMap.put("action", action);
+            int gripper = "grab".equals(action) ? 1 : 0;
+            RobotControlCommandRequest bridgeRequest = RobotControlCommandRequest.builder()
+                    .robotId(resolvedDeviceId)
+                    .jointAngles(DoubleStream.generate(() -> 0.0).limit(6).boxed().toList())
+                    .gripper(gripper)
+                    .build();
 
-            String payload = objectMapper.writeValueAsString(payloadMap);
-            webSocketHandler.broadcastMessage(payload);
+            RobotControlDispatchResponse dispatched = robotControlCommandService.dispatchCommand(bridgeRequest, "camera-gripper-compat");
 
-            return ResponseEntity.ok(ApiResponse.ok("robot_command broadcast", null));
+            return ResponseEntity.ok(ApiResponse.ok(dispatched.getMessage(), dispatched));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                     ApiResponse.fail("ROBOT_COMMAND_SEND_FAILED", "Failed to send robot_command: " + e.getMessage())

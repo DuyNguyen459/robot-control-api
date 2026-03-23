@@ -133,8 +133,8 @@ From `package.json`:
 ### 4.2 Dev Proxy
 
 From `vite.config.js`:
-- `/api` proxied to `https://robot-control-system-rmbw.onrender.com`
-- `/ws` proxied to `wss://robot-control-system-rmbw.onrender.com`
+- `/api` proxied to `https://robot-control-api-1.onrender.com`
+- `/ws` proxied to `wss://robot-control-api-1.onrender.com`
 
 ### 4.3 Main Capabilities
 

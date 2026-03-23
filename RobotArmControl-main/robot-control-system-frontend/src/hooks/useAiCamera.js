@@ -20,7 +20,6 @@ const GRIPPER_ACTION_COOLDOWN_MS = 800;
 const PINCH_CLOSED_THRESHOLD = 0.045;
 
 const SELFIE_MODE = String(import.meta.env.VITE_AI_CAMERA_SELFIE_MODE || "1") !== "0";
-const ENABLE_DIRECT_WS_AI_ANGLES = String(import.meta.env.VITE_AI_CAMERA_DIRECT_WS_SEND || "0") === "1";
 const DEADZONE_RAW = Number(import.meta.env.VITE_AI_CAMERA_DEADZONE || 0.16);
 const DEADZONE = Number.isFinite(DEADZONE_RAW) ? Math.min(0.25, Math.max(0.05, DEADZONE_RAW)) : 0.16;
 const MAX_OFFSET = 0.35;
@@ -177,7 +176,6 @@ export function useAiCamera() {
 
   const consecutiveSendErrorsRef = useRef(0);
   const sendErrorShownRef = useRef(false);
-  const consecutiveWsSendErrorsRef = useRef(0);
 
   const wsServiceRef = useRef(null);
 
@@ -379,7 +377,7 @@ export function useAiCamera() {
     }
 
     try {
-      await cameraService.sendGripperAction(normalized, Number(deviceId));
+      await cameraService.sendGripperAction(normalized, Number(deviceId), anglesRef.current.slice(0, 6));
       return true;
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || "Failed to send gripper command");
@@ -557,7 +555,6 @@ export function useAiCamera() {
 
     consecutiveSendErrorsRef.current = 0;
     sendErrorShownRef.current = false;
-    consecutiveWsSendErrorsRef.current = 0;
 
     runningRef.current = true;
     isSendingAnglesRef.current = true;
@@ -681,33 +678,26 @@ export function useAiCamera() {
       const deviceId = sessionDeviceIdRef.current ?? getPreferredDeviceId();
       if (deviceId == null || Number.isNaN(deviceId)) return;
       const payloadAngles = next.map((n) => Number(n));
-      const payload = { type: "ai_angles", deviceId, angles: payloadAngles };
+      const payload = {
+        robotId: Number(deviceId),
+        jointAngles: payloadAngles,
+        timestamp: new Date().toISOString(),
+      };
 
       // Preferred path: REST -> BE will forward/broadcast over WS to Unity.
       // Keep it slower to reduce backend load.
       const restMinIntervalMs = 100;
       if (now - lastRestSendRef.current >= restMinIntervalMs) {
         lastRestSendRef.current = now;
-        cameraService.sendAngles(payloadAngles, deviceId).catch(() => {
+        cameraService.sendRobotControl(payload).catch(() => {
           // keep UI minimal; status pills indicate connectivity
         });
-      }
-
-      // Optional: WS direct (useful for debugging), but do not depend on it.
-      if (ENABLE_DIRECT_WS_AI_ANGLES && wsConnectedRef.current) {
-        const svc = wsServiceRef.current;
-        const ok = svc?.sendJson(payload);
-        if (!ok) {
-          consecutiveWsSendErrorsRef.current += 1;
-        } else {
-          consecutiveWsSendErrorsRef.current = 0;
-        }
       }
 
       // Throttled diagnostics (once/sec)
       if (now - lastAiAnglesConsoleLogRef.current >= 1000) {
         lastAiAnglesConsoleLogRef.current = now;
-        console.debug("[AI Camera] send ai_angles:", payload);
+        console.debug("[AI Camera] send robot-control payload:", payload);
       }
 
       setAngles(next);
