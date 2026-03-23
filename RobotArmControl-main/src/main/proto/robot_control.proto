@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package robot;
+
+service RobotControl {
+  // Gửi tọa độ các trục (Joints) từ MediaPipe đến Unity
+  rpc SendRobotCommand (RobotTarget) returns (ControlResponse);
+  
+  // Stream dữ liệu log từ Unity/MediaPipe về server (nếu cần)
+  // Client-side streaming: client sends a stream of LogEntry messages
+  rpc StreamLogs (stream LogEntry) returns (LogSummary);
+}
+
+message RobotTarget {
+  float joint1 = 1;
+  float joint2 = 2;
+  float joint3 = 3;
+  float joint4 = 4;
+  float joint5 = 5;
+  float joint6 = 6;
+}
+
+message ControlResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message LogEntry {
+  string timestamp = 1;
+  string level = 2;
+  string message = 3;
+}
+
+message LogSummary {
+  int32 total_logs_sent = 1;
+}

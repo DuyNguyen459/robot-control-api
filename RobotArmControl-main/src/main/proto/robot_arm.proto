@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package robotarm;
+
+option csharp_namespace = "RobotArm.Grpc";
+
+message Landmark {
+  int32 id = 1;
+  double x = 2;
+  double y = 3;
+  double z = 4;
+  int64 timestamp = 5;
+}
+
+message StreamAck {
+  bool ok = 1;
+  string message = 2;
+}
+
+service RobotArm {
+  // Client-side streaming: Python (client) -> Unity (server)
+  rpc StreamLandmarks (stream Landmark) returns (StreamAck);
+}
