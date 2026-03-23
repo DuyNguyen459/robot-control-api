@@ -219,6 +219,29 @@ From `docker-compose.yml`:
 - Health checks enabled
 - Uses environment variables for DB credentials, JWT secret, Astra token, SCB path
 
+### 7.2 Render gRPC Notes (Unity subscriber)
+
+If Unity connects through public Render domain (port 443), do not hardcode `50061` externally.
+
+Recommended setup:
+- Keep existing Web service for REST (`/api`) as-is.
+- Create a separate Render service dedicated to gRPC stream.
+- In gRPC service env vars, set:
+  - `robot.grpc.use-port-env=true`
+  - `robot.grpc.bind-address=0.0.0.0`
+  - `SERVER_PORT=0` (to avoid HTTP server port conflict in same process)
+  - `robot.control.redis.enabled=true`
+  - `robot.control.redis.role=grpc`
+  - `REDIS_URL=<render internal redis url>`
+- In API service env vars, set:
+  - `robot.control.redis.enabled=true`
+  - `robot.control.redis.role=api`
+  - `REDIS_URL=<render internal redis url>`
+
+Unity client target for deployed gRPC service:
+- `https://<your-grpc-service>.onrender.com:443`
+- Use TLS channel credentials (not insecure plaintext).
+
 ### 7.2 Dockerfile
 
 Multi-stage build:

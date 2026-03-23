@@ -120,6 +120,11 @@
             <artifactId>spring-boot-starter-data-cassandra</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- gRPC server (backend -> Unity client stream) -->
         <dependency>
             <groupId>io.grpc</groupId>

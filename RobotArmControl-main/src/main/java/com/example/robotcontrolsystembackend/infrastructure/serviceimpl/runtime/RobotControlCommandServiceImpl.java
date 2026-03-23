@@ -5,6 +5,7 @@ import com.example.robotcontrolsystembackend.application.dto.response.runtime.Ro
 import com.example.robotcontrolsystembackend.application.service.runtime.RobotControlCommandService;
 import com.example.robotcontrolsystembackend.grpc.RobotControlCommand;
 import com.example.robotcontrolsystembackend.infrastructure.grpc.RobotControlStreamHub;
+import com.example.robotcontrolsystembackend.infrastructure.redis.RobotControlRedisBridge;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,6 +23,7 @@ import java.util.List;
 public class RobotControlCommandServiceImpl implements RobotControlCommandService {
 
     private final RobotControlStreamHub streamHub;
+    private final RobotControlRedisBridge redisBridge;
     private final ObjectMapper objectMapper;
 
     @Value("${robot.control.broadcast-websocket:false}")
@@ -60,6 +62,17 @@ public class RobotControlCommandServiceImpl implements RobotControlCommandServic
 
         RobotControlCommand command = builder.build();
         int delivered = streamHub.publish(command);
+        boolean publishedToRedis = redisBridge.publish(command);
+
+        log.info(
+            "Dispatch robot command: robotId={} hasGripper={} gripper={} deliveredSubscribers={} publishedRedis={} source={}",
+            request.getRobotId(),
+            request.getGripper() != null,
+            request.getGripper(),
+            delivered,
+            publishedToRedis,
+            source
+        );
 
         if (broadcastLegacyWebsocket) {
             broadcastLegacyPayload(request, timestamp);
@@ -67,7 +80,9 @@ public class RobotControlCommandServiceImpl implements RobotControlCommandServic
 
         String message = delivered > 0
                 ? "Robot control command dispatched"
-                : "Command accepted, no Unity gRPC subscribers currently connected";
+                : (publishedToRedis
+                    ? "Command accepted and published to Redis bridge"
+                    : "Command accepted, no Unity gRPC subscribers currently connected");
 
         return RobotControlDispatchResponse.builder()
                 .robotId(request.getRobotId())
