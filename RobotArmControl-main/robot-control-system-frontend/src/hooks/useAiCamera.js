@@ -77,12 +77,6 @@ function computePinchDistances(landmarks) {
 function isNeutralControlZone(control) {
   return Math.abs(Number(control || 0)) < 1e-6;
 }
-
-function resetPendingAutoGripper(refs) {
-  refs.pendingGripperActionRef.current = null;
-  refs.pendingGripperSinceRef.current = 0;
-}
-
 function countFingers(landmarks, handedness) {
   if (!landmarks || landmarks.length < 21) return 0;
 
@@ -389,8 +383,16 @@ export function useAiCamera() {
     const thumbIndex = pinchDistances?.thumbIndex;
     const thumbMiddle = pinchDistances?.thumbMiddle;
 
-    if (thumbIndex != null && thumbIndex <= PINCH_CLOSED_THRESHOLD) return "grab";
-    if (thumbMiddle != null && thumbMiddle <= PINCH_CLOSED_THRESHOLD) return "release";
+    // Require an exclusive pinch: index pinch => grab, middle pinch => release.
+    // If both pinches are detected (ambiguous), ignore to avoid accidental toggles.
+    const ti = typeof thumbIndex === "number" ? thumbIndex : Infinity;
+    const tm = typeof thumbMiddle === "number" ? thumbMiddle : Infinity;
+
+    const indexClosed = ti <= PINCH_CLOSED_THRESHOLD;
+    const middleClosed = tm <= PINCH_CLOSED_THRESHOLD;
+
+    if (indexClosed && !middleClosed) return "grab";
+    if (middleClosed && !indexClosed) return "release";
     return null;
   }
 
