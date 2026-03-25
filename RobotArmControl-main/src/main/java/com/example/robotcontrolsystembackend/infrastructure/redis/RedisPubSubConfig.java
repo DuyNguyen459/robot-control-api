@@ -1,6 +1,7 @@
 package com.example.robotcontrolsystembackend.infrastructure.redis;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -9,6 +10,7 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 @Configuration
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "robot.control.redis.enabled", havingValue = "true")
 public class RedisPubSubConfig {
 
     private final RobotControlRedisBridge redisBridge;
