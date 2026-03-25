@@ -32,6 +32,13 @@ public class RobotControlCommandController {
     public ResponseEntity<ApiResponse<RobotControlDispatchResponse>> dispatch(
             @Valid @RequestBody RobotControlCommandRequest request
     ) {
+
+        // Log chi tiết payload nhận được để debug
+        System.out.println("[DEBUG] RobotControlCommandRequest payload: robotId=" + request.getRobotId()
+                + ", jointAngles=" + request.getJointAngles()
+                + ", gripper=" + request.getGripper()
+                + ", timestamp=" + request.getTimestamp());
+
         RobotControlDispatchResponse response = robotControlCommandService.dispatchCommand(request, "rest-api");
 
         return ResponseEntity.ok(ApiResponse.<RobotControlDispatchResponse>builder()

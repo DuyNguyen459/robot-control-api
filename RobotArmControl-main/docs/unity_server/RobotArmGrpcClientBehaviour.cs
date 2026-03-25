@@ -289,6 +289,10 @@ public class RobotArmGrpcClientBehaviour : MonoBehaviour
 
     private void ApplyCommandOnMainThread(RobotControlCommand cmd)
     {
+
+        // Log chi tiết toàn bộ payload nhận được từ BE/gRPC
+        WriteLog("INFO", $"[RAW CMD] {FormatPayload(cmd)}");
+
         if (cmd == null)
         {
             WriteLog("WARN", "received null command");
@@ -305,6 +309,32 @@ public class RobotArmGrpcClientBehaviour : MonoBehaviour
         for (int i = 0; i < 6; i++)
         {
             angles[i] = (float)cmd.JointAngles[i];
+        }
+
+
+        // Log và luôn tìm RobotGrabber trong scene để gọi đúng hành động vật lý
+        if (cmd.HasGripper)
+        {
+            string gripperAction = cmd.Gripper == 1 ? "GRIP (gắp)" : "RELEASE (thả)";
+            WriteLog("INFO", $"[GRIPPER] Nhận lệnh: {gripperAction} (cmd.Gripper={cmd.Gripper})");
+
+            string actionStr = cmd.Gripper == 1 ? "grab" : "release";
+            // Ưu tiên tìm trên cùng GameObject
+            var grabber = GetComponent<RobotGrabber>();
+            if (grabber == null)
+            {
+                // Nếu không có, tìm bất kỳ RobotGrabber nào trong scene
+                grabber = GameObject.FindObjectOfType<RobotGrabber>();
+            }
+            if (grabber != null)
+            {
+                WriteLog("INFO", $"[GRIPPER] Gọi RobotGrabber.HandleAction('{actionStr}') trên {grabber.gameObject.name}");
+                grabber.HandleAction(actionStr);
+            }
+            else
+            {
+                WriteLog("WARN", "[GRIPPER] Không tìm thấy RobotGrabber nào trong scene để thực hiện hành động vật lý!");
+            }
         }
 
         if (cmd.HasGripper && useJoint5AsGripper)
