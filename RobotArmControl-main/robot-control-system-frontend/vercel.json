@@ -1,4 +1,12 @@
 {
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://robot-control-api-1.onrender.com/api/$1"
+    }
+  ]
+}
+{
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
